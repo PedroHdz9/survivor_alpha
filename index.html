@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Super Survivor Alpha</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #game-container {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+            border: 4px solid #333;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="game-container"></div>
+
+    <script>
+        // --- ESTADO GLOBAL ---
+        let gameState = {
+            score: 0,
+            level: 1,
+            exp: 0,
+            nextLevelExp: 100,
+            gameSeconds: 0,
+            isInvulnerable: false,
+            bossActive: false,
+            bossCount: 0,
+            abilities: {
+                solarExplosion: 0,
+                aura: 0,
+                doubleShot: 0,
+                ricochet: 0
+            },
+            stats: {
+                maxHp: 100,
+                hp: 100,
+                speed: 190,
+                damage: 25,
+                attackSpeed: 1000,
+                area: 1
+            }
+        };
+
+        // --- ESCENA: MENÚ PRINCIPAL ---
+        class MainMenu extends Phaser.Scene {
+            constructor() { super('MainMenu'); }
+            create() {
+                this.add.rectangle(400, 300, 800, 600, 0x111111);
+                this.add.text(400, 150, 'SUPER SURVIVOR', { fontSize: '64px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+                const startBtn = this.add.rectangle(400, 400, 250, 70, 0x27ae60).setInteractive();
+                this.add.text(400, 400, 'INICIAR PARTIDA', { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
+                startBtn.on('pointerdown', () => this.scene.start('GameScene'));
+                this.add.text(400, 550, 'Usa WASD, Flechas o Joystick para moverte', { fontSize: '16px', fill: '#888' }).setOrigin(0.5);
+            }
+        }
+
+        // --- ESCENA: JUEGO PRINCIPAL ---
+        class GameScene extends Phaser.Scene {
+            constructor() { super('GameScene'); }
+
+            init() {
+                gameState.stats.maxHp = 100;
+                gameState.hp = 100;
+                gameState.stats.speed = 190;
+                gameState.stats.damage = 25;
+                gameState.stats.attackSpeed = 1000;
+                gameState.exp = 0;
+                gameState.level = 1;
+                gameState.score = 0;
+                gameState.nextLevelExp = 100;
+                gameState.gameSeconds = 0;
+                gameState.isInvulnerable = false;
+                gameState.bossActive = false;
+                gameState.bossCount = 0;
+                gameState.abilities.solarExplosion = 0;
+                gameState.abilities.aura = 0;
+                gameState.abilities.doubleShot = 0;
+                gameState.abilities.ricochet = 0;
+                this.joystickData = { x: 0, y: 0, active: false };
+            }
+
+            create() {
+                this.add.grid(0, 0, 4000, 4000, 64, 64, 0x222222, 1, 0x333333).setOrigin(0.5);
+                this.cameras.main.setBounds(-2000, -2000, 4000, 4000);
+                this.physics.world.setBounds(-2000, -2000, 4000, 4000);
+
+                this.player = this.add.container(0, 0);
+                const body = this.add.circle(0, 0, 20, 0x3498db);
+                const eye = this.add.circle(10, -5, 5, 0xffffff);
+                this.player.add([body, eye]);
+                this.physics.add.existing(this.player);
+                this.player.body.setCircle(18, -18, -18);
+                this.player.body.setCollideWorldBounds(true);
+
+                this.auraGraphic = this.add.circle(0, 0, 100, 0x3498db, 0.15);
+                this.auraGraphic.setVisible(false);
+
+                this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+
+                this.enemies = this.physics.add.group({ bounceX: 0.3, bounceY: 0.3 });
+                this.bullets = this.physics.add.group();
+                this.enemyProjectiles = this.physics.add.group();
+                this.gems = this.physics.add.group();
+                this.pickups = this.physics.add.group();
+
+                this.physics.add.collider(this.enemies, this.enemies);
+                this.physics.add.collider(this.player, this.enemies);
+
+                this.cursors = this.input.keyboard.createCursorKeys();
+                this.wasd = this.input.keyboard.addKeys('W,A,S,D');
+
+                this.createHUD();
+                this.createJoystick();
+
+                this.clockEvent = this.time.addEvent({
+                    delay: 1000,
+                    callback: () => {
+                        gameState.gameSeconds++;
+                        this.timeText.setText(this.getFormattedTime());
+                        if ((gameState.gameSeconds + 5) % 150 === 0) this.showBossWarning();
+                        if (gameState.gameSeconds > 0 && gameState.gameSeconds % 150 === 0 && !gameState.bossActive) this.spawnBoss();
+                    },
+                    callbackScope: this,
+                    loop: true
+                });
+
+                this.enemyTimer = this.time.addEvent({
+                    delay: 2800,
+                    callback: this.spawnWave,
+                    callbackScope: this,
+                    loop: true
+                });
+
+                this.attackTimer = this.time.addEvent({
+                    delay: gameState.stats.attackSpeed,
+                    callback: this.autoAttack,
+                    callbackScope: this,
+                    loop: true
+                });
+
+                this.auraTimer = this.time.addEvent({
+                    delay: 800,
+                    callback: this.applyAuraDamage,
+                    callbackScope: this,
+                    loop: true
+                });
+
+                this.physics.add.overlap(this.bullets, this.enemies, this.hitEnemy, null, this);
+                this.physics.add.overlap(this.player, this.gems, this.collectGem, null, this);
+                this.physics.add.overlap(this.player, this.enemyProjectiles, this.hitPlayerByProjectile, null, this);
+                this.physics.add.overlap(this.player, this.pickups, this.collectPickup, null, this);
+            }
+
+            createHUD() {
+                this.hud = this.add.container(0, 0).setScrollFactor(0).setDepth(100);
+                this.hpBarBase = this.add.rectangle(20, 35, 200, 20, 0x000000).setOrigin(0);
+                this.hpBar = this.add.rectangle(20, 35, 200, 20, 0x2ecc71).setOrigin(0);
+                this.hpText = this.add.text(120, 45, '100 / 100', { fontSize: '12px', fill: '#ffffff', fontWeight: 'bold', stroke: '#000000', strokeThickness: 2 }).setOrigin(0.5);
+                this.expBarBase = this.add.rectangle(0, 0, 800, 10, 0x444444).setOrigin(0);
+                this.expBar = this.add.rectangle(0, 0, 0, 10, 0x9b59b6).setOrigin(0);
+                this.levelText = this.add.text(20, 65, 'Nivel: 1', { fontSize: '18px', fill: '#fff', fontWeight: 'bold' });
+                this.timeText = this.add.text(400, 35, '00:00', { fontSize: '26px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+                this.bossBarContainer = this.add.container(400, 570).setAlpha(0);
+                this.bossBarBase = this.add.rectangle(0, 0, 400, 8, 0x333333).setOrigin(0.5);
+                this.bossBarFill = this.add.rectangle(0, 0, 400, 8, 0x9b59b6).setOrigin(0.5);
+                this.bossBarText = this.add.text(0, -15, 'JEFE', { fontSize: '14px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+                this.bossBarContainer.add([this.bossBarBase, this.bossBarFill, this.bossBarText]);
+                this.bossWarning = this.add.container(400, 100).setAlpha(0).setScale(0.5);
+                const warningBg = this.add.rectangle(0, 0, 320, 90, 0x000000, 0.9).setStrokeStyle(4, 0xe74c3c);
+                const skullIcon = this.drawSkullIcon(-105, 0);
+                const warningTxt = this.add.text(35, 0, '¡HA APARECIDO\nUN JEFE!', { fontSize: '24px', fill: '#e74c3c', fontWeight: 'bold', align: 'center', stroke: '#000', strokeThickness: 5 }).setOrigin(0.5);
+                this.bossWarning.add([warningBg, skullIcon, warningTxt]);
+                this.hud.add([this.hpBarBase, this.hpBar, this.hpText, this.expBarBase, this.expBar, this.levelText, this.timeText, this.bossBarContainer, this.bossWarning]);
+            }
+
+            drawSkullIcon(x, y) {
+                const g = this.add.graphics();
+                g.fillStyle(0xffffff, 1); g.fillCircle(x, y - 5, 15); g.fillRect(x - 10, y + 5, 20, 10);
+                g.fillStyle(0x000000, 1); g.fillCircle(x - 6, y - 5, 4); g.fillCircle(x + 6, y - 5, 4);
+                g.fillRect(x - 6, y + 10, 2, 5); g.fillRect(x - 1, y + 10, 2, 5); g.fillRect(x + 4, y + 10, 2, 5);
+                return g;
+            }
+
+            showBossWarning() {
+                this.tweens.add({ targets: this.bossWarning, alpha: 1, scale: 1, duration: 600, ease: 'Back.easeOut' });
+                this.tweens.add({ targets: this.bossWarning, alpha: 0.5, duration: 500, yoyo: true, repeat: 4 });
+                this.time.delayedCall(4500, () => { this.tweens.add({ targets: this.bossWarning, alpha: 0, scale: 0.8, duration: 500, ease: 'Power2' }); });
+            }
+
+            createJoystick() {
+                const x = 680, y = 480, baseRadius = 60, stickRadius = 30;
+                this.joyBase = this.add.circle(x, y, baseRadius, 0xffffff, 0.1).setStrokeStyle(2, 0xffffff, 0.3).setScrollFactor(0).setDepth(101).setInteractive();
+                this.joyStick = this.add.circle(x, y, stickRadius, 0xffffff, 0.2).setStrokeStyle(1, 0xffffff, 0.5).setScrollFactor(0).setDepth(102);
+                this.joyBase.on('pointerdown', () => { this.joystickData.active = true; });
+                this.input.on('pointermove', (pointer) => {
+                    if (!this.joystickData.active) return;
+                    const dist = Phaser.Math.Distance.Between(x, y, pointer.x, pointer.y);
+                    const angle = Phaser.Math.Angle.Between(x, y, pointer.x, pointer.y);
+                    const clampedDist = Math.min(dist, baseRadius);
+                    this.joyStick.setPosition(x + Math.cos(angle) * clampedDist, y + Math.sin(angle) * clampedDist);
+                    this.joystickData.x = Math.cos(angle) * (clampedDist / baseRadius);
+                    this.joystickData.y = Math.sin(angle) * (clampedDist / baseRadius);
+                });
+                this.input.on('pointerup', () => { this.joystickData.active = false; this.joystickData.x = 0; this.joystickData.y = 0; this.joyStick.setPosition(x, y); });
+                this.hud.add([this.joyBase, this.joyStick]);
+            }
+
+            update(time, delta) {
+                let vx = 0, vy = 0;
+                const speed = gameState.stats.speed;
+                if (this.cursors.left.isDown || this.wasd.A.isDown) vx = -speed;
+                else if (this.cursors.right.isDown || this.wasd.D.isDown) vx = speed;
+                if (this.cursors.up.isDown || this.wasd.W.isDown) vy = -speed;
+                else if (this.cursors.down.isDown || this.wasd.S.isDown) vy = speed;
+                if (this.joystickData.active) { vx = this.joystickData.x * speed; vy = this.joystickData.y * speed; }
+                this.player.body.setVelocity(vx, vy);
+                if (vx !== 0 || vy !== 0) this.player.angle = Math.atan2(vy, vx) * (180 / Math.PI);
+
+                if (gameState.abilities.aura > 0) {
+                    const auraLevel = gameState.abilities.aura;
+                    const scale = 1 + (auraLevel - 1) * 0.2;
+                    this.auraGraphic.setVisible(true).setPosition(this.player.x, this.player.y).setScale(scale);
+                }
+
+                this.enemies.getChildren().forEach(enemy => {
+                    const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y);
+                    if (enemy.isBoss) {
+                        this.physics.moveToObject(enemy, this.player, enemy.speed);
+                        if (time > enemy.nextAttackTime) { this.bossAttack(enemy); enemy.nextAttackTime = time + enemy.shootCooldown; }
+                        this.bossBarFill.width = 400 * Math.max(0, enemy.hp / enemy.maxHp);
+                        this.bossBarContainer.setAlpha(1);
+                    } else if (enemy.isRanged) {
+                        if (dist > 300) this.physics.moveToObject(enemy, this.player, enemy.speed);
+                        else if (dist < 250) {
+                            const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, enemy.x, enemy.y);
+                            enemy.body.setVelocity(Math.cos(angle) * enemy.speed, Math.sin(angle) * enemy.speed);
+                        } else enemy.body.setVelocity(0, 0);
+                        if (time > enemy.nextShootTime) { this.enemyShoot(enemy); enemy.nextShootTime = time + 2000; }
+                    } else {
+                        if (dist < 1200) this.physics.moveToObject(enemy, this.player, enemy.speed);
+                        else enemy.body.setVelocity(0, 0);
+                    }
+                });
+
+                this.gems.getChildren().forEach(gem => { if (gem.isBeingAttracted) this.physics.moveToObject(gem, this.player, 800); });
+                this.checkPlayerDamage();
+                this.hpBar.width = Math.max(0, (gameState.hp / gameState.stats.maxHp) * 200);
+                this.hpText.setText(`${Math.ceil(Math.max(0, gameState.hp))} / ${gameState.stats.maxHp}`);
+                this.expBar.width = Math.min(800, (gameState.exp / gameState.nextLevelExp) * 800);
+            }
+
+            applyAuraDamage() {
+                if (gameState.abilities.aura <= 0) return;
+                const auraLevel = gameState.abilities.aura;
+                const currentRadius = 100 * (1 + (auraLevel - 1) * 0.2);
+                const auraDamage = (gameState.stats.damage * 0.75) * (1 + (auraLevel - 1) * 0.15);
+                this.enemies.getChildren().forEach(enemy => {
+                    if (Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y) < currentRadius) this.damageEnemy(enemy, auraDamage);
+                });
+            }
+
+            checkPlayerDamage() {
+                if (gameState.isInvulnerable) return;
+                this.enemies.getChildren().forEach(enemy => {
+                    const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y);
+                    if (dist < (enemy.isBoss ? 75 : 38)) this.applyDamage(enemy.isBoss ? 40 : 10);
+                });
+            }
+
+            applyDamage(amount) {
+                if (gameState.isInvulnerable || gameState.hp <= 0) return;
+                gameState.hp -= amount;
+                if (gameState.hp <= 0) { this.gameOver(); return; }
+                gameState.isInvulnerable = true;
+                this.tweens.add({ targets: this.player, alpha: 0.4, duration: 100, yoyo: true, repeat: 3 });
+                this.player.list[0].setFillStyle(0xff3333);
+                this.time.delayedCall(400, () => {
+                    gameState.isInvulnerable = false;
+                    if (this.player && this.player.active) this.player.list[0].setFillStyle(0x3498db);
+                });
+            }
+
+            hitPlayerByProjectile(player, projectile) {
+                if (gameState.isInvulnerable) { projectile.destroy(); return; }
+                this.applyDamage(projectile.isBossProjectile ? 30 : 12);
+                projectile.destroy();
+            }
+
+            spawnBoss() {
+                gameState.bossActive = true; gameState.bossCount++;
+                const angle = Math.random() * Math.PI * 2;
+                const x = this.player.x + Math.cos(angle) * 600, y = this.player.y + Math.sin(angle) * 600;
+                const hue = Math.max(150, 210 - (gameState.bossCount * 20));
+                const bossColor = Phaser.Display.Color.HSLToColor(hue / 360, 0.6, 0.7).color;
+                const boss = this.add.circle(x, y, 60, bossColor);
+                this.enemies.add(boss); this.physics.add.existing(boss); boss.body.setCircle(60);
+                const scaleFactor = 1 + (gameState.bossCount - 1) * 0.5;
+                boss.isBoss = true; boss.maxHp = 5000 * scaleFactor; boss.hp = boss.maxHp;
+                boss.speed = 100 + (gameState.bossCount * 10);
+                boss.shootCooldown = Math.max(800, 1500 - (gameState.bossCount * 150));
+                boss.projectileSpeed = 250 + (gameState.bossCount * 40);
+                boss.nextAttackTime = this.time.now + 1200; boss.setAlpha(0);
+                this.bossBarText.setText(`JEFE NIVEL ${gameState.bossCount}`);
+                this.tweens.add({ targets: boss, alpha: 1, duration: 1000 });
+            }
+
+            bossAttack(boss) {
+                const ballsCount = 12 + (gameState.bossCount * 2);
+                const offsetAngle = Math.random() * Math.PI;
+                for (let i = 0; i < ballsCount; i++) {
+                    const angle = offsetAngle + (Math.PI * 2 / ballsCount) * i;
+                    const ball = this.add.circle(boss.x, boss.y, 12, 0x9b59b6);
+                    this.enemyProjectiles.add(ball); this.physics.add.existing(ball);
+                    ball.isBossProjectile = true;
+                    ball.body.setVelocity(Math.cos(angle) * boss.projectileSpeed, Math.sin(angle) * boss.projectileSpeed);
+                    this.time.delayedCall(4000, () => { if (ball.active) ball.destroy(); });
+                }
+            }
+
+            enemyShoot(enemy) {
+                const projectile = this.add.circle(enemy.x, enemy.y, 6, 0xffff00);
+                this.enemyProjectiles.add(projectile); this.physics.add.existing(projectile);
+                this.physics.moveToObject(projectile, this.player, 300);
+                this.time.delayedCall(3000, () => { if (projectile.active) projectile.destroy(); });
+            }
+
+            autoAttack() {
+                const shootProyectile = (damageMod = 1.0) => {
+                    const closestEnemy = this.getClosestEnemy();
+                    if (closestEnemy) {
+                        const bullet = this.add.circle(this.player.x, this.player.y, 8, 0xf1c40f);
+                        this.bullets.add(bullet); this.physics.add.existing(bullet);
+                        bullet.bounces = gameState.abilities.ricochet > 0 ? gameState.abilities.ricochet : 0;
+                        bullet.dmgMult = damageMod;
+                        this.physics.moveToObject(bullet, closestEnemy, 500);
+                        this.time.delayedCall(1200, () => { if (bullet.active) bullet.destroy(); });
+                    }
+                };
+                const dsLevel = gameState.abilities.doubleShot;
+                if (dsLevel > 0) {
+                    const damageBonus = 1 + (dsLevel - 1) * 0.10;
+                    shootProyectile(0.5 * damageBonus);
+                    this.time.delayedCall(150, () => shootProyectile(0.5 * damageBonus));
+                } else shootProyectile(1.0);
+            }
+
+            getClosestEnemy(excludeEnemy = null) {
+                let enemies = this.enemies.getChildren();
+                if (enemies.length === 0) return null;
+                return enemies.reduce((closest, enemy) => {
+                    if (enemy === excludeEnemy) return closest;
+                    const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y);
+                    if (!closest || dist < closest.dist) return { enemy, dist };
+                    return closest;
+                }, null)?.enemy;
+            }
+
+            spawnWave() {
+                if (gameState.bossActive) return;
+                const waveNum = Math.floor(gameState.gameSeconds / 30);
+                const count = Math.min(4 + waveNum, 12);
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const x = this.player.x + Math.cos(angle) * 700, y = this.player.y + Math.sin(angle) * 700;
+                    let isRanged = (gameState.level >= 5 && Math.random() > 0.8);
+                    const enemy = this.add.circle(x, y, 16, isRanged ? 0xffff00 : 0xe74c3c);
+                    this.enemies.add(enemy); this.physics.add.existing(enemy); enemy.body.setCircle(16);
+                    enemy.isRanged = isRanged; enemy.hp = (isRanged ? 15 : 20) + (waveNum * 6);
+                    enemy.speed = (isRanged ? 60 : 75) + (waveNum * 4);
+                    enemy.nextShootTime = this.time.now + 1000;
+                }
+            }
+
+            hitEnemy(bullet, enemy) {
+                const bulletX = bullet.x, bulletY = bullet.y;
+                this.damageEnemy(enemy, gameState.stats.damage * (bullet.dmgMult || 1.0));
+                if (bullet.bounces > 0) {
+                    bullet.bounces--; bullet.dmgMult *= 0.5;
+                    const nextEnemy = this.getClosestEnemy(enemy);
+                    if (nextEnemy && Phaser.Math.Distance.Between(bulletX, bulletY, nextEnemy.x, nextEnemy.y) < 400) {
+                        this.physics.moveToObject(bullet, nextEnemy, 500);
+                        const trail = this.add.circle(bulletX, bulletY, 4, 0x2ecc71, 0.5);
+                        this.time.delayedCall(100, () => trail.destroy());
+                    } else bullet.destroy();
+                } else bullet.destroy();
+
+                if (gameState.abilities.solarExplosion > 0) {
+                    const solarLevel = gameState.abilities.solarExplosion;
+                    const currentSplashRadius = 80 * (1 + (solarLevel - 1) * 0.25);
+                    const currentDamageRatio = 0.55 * (1 + (solarLevel - 1) * 0.20);
+                    const splashDamage = (gameState.stats.damage * (bullet.dmgMult || 1.0)) * currentDamageRatio;
+                    const expCircle = this.add.circle(bulletX, bulletY, currentSplashRadius, 0xf1c40f, 0.3);
+                    this.tweens.add({ targets: expCircle, scale: 1.5, alpha: 0, duration: 300, onComplete: () => expCircle.destroy() });
+                    this.enemies.getChildren().forEach(target => {
+                        if (Phaser.Math.Distance.Between(bulletX, bulletY, target.x, target.y) < currentSplashRadius && target !== enemy) this.damageEnemy(target, splashDamage);
+                    });
+                }
+            }
+
+            damageEnemy(enemy, amount) {
+                enemy.hp -= amount; enemy.setAlpha(0.6);
+                this.time.delayedCall(100, () => { if (enemy.active) enemy.setAlpha(1); });
+                if (enemy.hp <= 0) {
+                    this.handleEnemyDeath(enemy);
+                    enemy.destroy();
+                    gameState.score += enemy.isBoss ? 1000 : 10;
+                }
+            }
+
+            handleEnemyDeath(enemy) {
+                if (enemy.isBoss) {
+                    gameState.bossActive = false; this.bossBarContainer.setAlpha(0);
+                    for (let i = 0; i < 15; i++) this.spawnGem(enemy.x + Math.random() * 80 - 40, enemy.y + Math.random() * 80 - 40);
+                    this.spawnHealthPickup(enemy.x, enemy.y);
+                } else {
+                    // --- NUEVA LÓGICA DE DROPS ---
+                    // Drop de orbe normal (70%)
+                    if (Math.random() < 0.70) this.spawnGem(enemy.x, enemy.y, false);
+
+                    // Drop de orbe GRANDE (30% si minuto >= 6)
+                    if (gameState.gameSeconds >= 300 && Math.random() < 0.30) {
+                        this.spawnGem(enemy.x + 5, enemy.y + 5, true);
+                    }
+
+                    if (Math.random() < 0.02) this.spawnHealthPickup(enemy.x, enemy.y);
+                    if (Math.random() < 0.01) this.spawnMagnetPickup(enemy.x, enemy.y);
+                }
+            }
+
+            spawnGem(x, y, isLarge = false) {
+                let color = isLarge ? 0xf1c40f : 0x9b59b6; // Dorado para grandes, Púrpura para normales
+                let size = isLarge ? 12 : 8;
+                const gem = this.add.star(x, y, 5, isLarge ? 6 : 4, size, color);
+                this.gems.add(gem);
+                this.physics.add.existing(gem);
+                gem.isBeingAttracted = false;
+                gem.isLarge = isLarge;
+
+                if (isLarge) {
+                    this.tweens.add({ targets: gem, scale: 1.3, duration: 400, yoyo: true, repeat: -1 });
+                }
+            }
+
+            spawnHealthPickup(x, y) {
+                const container = this.add.container(x, y);
+                const base = this.add.circle(0, 0, 12, 0xffffff);
+                const cross1 = this.add.rectangle(0, 0, 14, 4, 0xe74c3c), cross2 = this.add.rectangle(0, 0, 4, 14, 0xe74c3c);
+                container.add([base, cross1, cross2]); container.type = 'health';
+                this.pickups.add(container); this.physics.add.existing(container); container.body.setCircle(12);
+                this.tweens.add({ targets: container, scale: 1.2, duration: 600, yoyo: true, repeat: -1 });
+            }
+
+            spawnMagnetPickup(x, y) {
+                const magnet = this.add.container(x, y);
+                const body = this.add.rectangle(0, 0, 20, 20, 0x95a5a6).setStrokeStyle(2, 0x2c3e50);
+                const left = this.add.rectangle(-6, 4, 6, 8, 0xe74c3c), right = this.add.rectangle(6, 4, 6, 8, 0x3498db);
+                magnet.add([body, left, right]); magnet.type = 'magnet';
+                this.pickups.add(magnet); this.physics.add.existing(magnet); magnet.body.setCircle(10);
+                this.tweens.add({ targets: magnet, y: y - 10, duration: 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+            }
+
+            collectPickup(player, pickup) {
+                if (pickup.type === 'health') gameState.hp = Math.min(gameState.stats.maxHp, gameState.hp + 30);
+                else if (pickup.type === 'magnet') this.gems.getChildren().forEach(gem => { gem.isBeingAttracted = true; });
+                pickup.destroy();
+            }
+
+            collectGem(player, gem) {
+                const expGain = gem.isLarge ? 120 : 40; // Triple de exp si es grande
+                gem.destroy();
+                gameState.exp += expGain;
+                if (gameState.exp >= gameState.nextLevelExp) this.levelUp();
+            }
+
+            levelUp() {
+                gameState.level++; gameState.exp = 0;
+                gameState.nextLevelExp = Math.floor(gameState.nextLevelExp * 1.25);
+                this.levelText.setText('Nivel: ' + gameState.level);
+                this.scene.pause(); this.scene.launch('SpecialAbilityScene');
+            }
+
+            gameOver() { if (this.clockEvent) this.clockEvent.remove(); this.scene.start('MainMenu'); }
+            getFormattedTime() {
+                const mins = Math.floor(gameState.gameSeconds / 60).toString().padStart(2, '0');
+                const secs = (gameState.gameSeconds % 60).toString().padStart(2, '0');
+                return `${mins}:${secs}`;
+            }
+        }
+
+        class SpecialAbilityScene extends Phaser.Scene {
+            constructor() { super('SpecialAbilityScene'); }
+            create() {
+                const isSpecialMilestone = (gameState.level % 5 === 0);
+                this.add.rectangle(400, 300, 500, 520, 0x1a1a1a, 0.98).setStrokeStyle(5, isSpecialMilestone ? 0xf1c40f : 0x9b59b6);
+                this.add.text(400, 80, isSpecialMilestone ? '¡NUEVA HABILIDAD!' : 'SELECCIONA MEJORA', { fontSize: '32px', fill: isSpecialMilestone ? '#f1c40f' : '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+
+                const specialAbilities = [
+                    { name: 'Explosión Solar', id: 'solar', getDesc: () => `Nvl ${gameState.abilities.solarExplosion + 1}: +Radio y +Daño de área.`, effect: () => gameState.abilities.solarExplosion++ },
+                    { name: 'Aura', id: 'aura', getDesc: () => `Nvl ${gameState.abilities.aura + 1}: +Radio de aura y +Daño por segundo.`, effect: () => gameState.abilities.aura++ },
+                    {
+                        name: 'Tiro doble', id: 'double', getDesc: () => `Nvl ${gameState.abilities.doubleShot + 1}: Dispara 2 ráfagas. +10% Daño por nivel.`, effect: () => {
+                            if (gameState.abilities.doubleShot === 0) {
+                                gameState.stats.attackSpeed *= 1.2;
+                                const gs = this.scene.get('GameScene');
+                                gs.attackTimer.reset({ delay: gameState.stats.attackSpeed, callback: gs.autoAttack, callbackScope: gs, loop: true });
+                            }
+                            gameState.abilities.doubleShot++;
+                        }
+                    },
+                    { name: 'Ricochet', id: 'rico', getDesc: () => `Nvl ${gameState.abilities.ricochet + 1}: +1 Rebote contra enemigos.`, effect: () => gameState.abilities.ricochet++ }
+                ];
+
+                const baseUpgrades = [
+                    { name: 'DAÑO +10', id: 'damage', getDesc: () => "Aumenta la fuerza de tus ataques.", effect: () => gameState.stats.damage += 10 },
+                    { name: 'VELOCIDAD +20', id: 'speed', getDesc: () => "Te mueves más rápido.", effect: () => gameState.stats.speed += 20 },
+                    { name: 'VIDA MÁX +30', id: 'hp', getDesc: () => "Aumenta tu resistencia.", effect: () => { gameState.stats.maxHp += 30; gameState.hp = Math.min(gameState.stats.maxHp, gameState.hp + 30); } },
+                    {
+                        name: 'VEL. ATAQUE +20%', id: 'atk_speed', getDesc: () => "Dispara proyectiles más rápido.", effect: () => {
+                            gameState.stats.attackSpeed *= 0.8;
+                            const gs = this.scene.get('GameScene');
+                            gs.attackTimer.reset({ delay: gameState.stats.attackSpeed, callback: gs.autoAttack, callbackScope: gs, loop: true });
+                        }
+                    }
+                ];
+
+                let options = isSpecialMilestone ? Phaser.Utils.Array.Shuffle(specialAbilities).slice(0, 3) :
+                    Phaser.Utils.Array.Shuffle([...specialAbilities.filter(a => this.getAbilityLevel(a.id) > 0), ...baseUpgrades]).slice(0, 3);
+
+                const descBox = this.add.container(400, 480).setAlpha(0);
+                const descBg = this.add.rectangle(0, 0, 450, 45, 0x000000, 0.8).setOrigin(0.5);
+                const descText = this.add.text(0, 0, '', { fontSize: '15px', fill: '#ccc', fontStyle: 'italic', align: 'center' }).setOrigin(0.5);
+                descBox.add([descBg, descText]);
+
+                options.forEach((opt, i) => {
+                    const yPos = 180 + (i * 110), isSpecial = specialAbilities.find(s => s.id === opt.id);
+                    const btn = this.add.rectangle(400, yPos, 400, 85, isSpecial ? 0x2c3e50 : 0x34495e).setInteractive();
+                    if (isSpecial) this.drawSpecialIcon(260, yPos, opt.id); else this.drawBaseIcon(260, yPos, opt.id);
+                    const title = isSpecial ? `${opt.name} (NVL ${this.getAbilityLevel(opt.id) + 1})` : opt.name;
+                    this.add.text(320, yPos, title, { fontSize: '18px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0, 0.5);
+                    btn.on('pointerdown', () => { opt.effect(); this.scene.stop(); this.scene.resume('GameScene'); });
+                    btn.on('pointerover', () => { btn.setFillStyle(isSpecial ? 0xf39c12 : 0x2980b9, 0.4); descText.setText(opt.getDesc()); descBox.setAlpha(1); });
+                    btn.on('pointerout', () => { btn.setFillStyle(isSpecial ? 0x2c3e50 : 0x34495e); descBox.setAlpha(0); });
+                });
+            }
+
+            getAbilityLevel(id) {
+                if (id === 'solar') return gameState.abilities.solarExplosion;
+                if (id === 'aura') return gameState.abilities.aura;
+                if (id === 'double') return gameState.abilities.doubleShot;
+                if (id === 'rico') return gameState.abilities.ricochet;
+                return 0;
+            }
+
+            drawBaseIcon(x, y, type) {
+                const graphics = this.add.graphics();
+                if (type === 'damage') { graphics.fillStyle(0x95a5a6, 1); graphics.fillRect(x - 2, y + 2, 4, 12); graphics.fillStyle(0xecf0f1, 1); graphics.fillTriangle(x - 4, y + 2, x + 4, y + 2, x, y - 18); }
+                else if (type === 'speed') { graphics.fillStyle(0x34e7e4, 1); graphics.fillCircle(x - 4, y + 5, 8); }
+                else if (type === 'hp') { graphics.fillStyle(0xe74c3c, 1); graphics.fillCircle(x - 6, y - 4, 8); graphics.fillCircle(x + 6, y - 4, 8); graphics.fillTriangle(x - 14, y - 2, x + 14, y - 2, x, y + 14); }
+                else if (type === 'atk_speed') { graphics.fillStyle(0xf1c40f, 1); graphics.beginPath(); graphics.moveTo(x + 4, y - 15); graphics.lineTo(x - 8, y + 2); graphics.lineTo(x + 2, y + 2); graphics.lineTo(x - 4, y + 15); graphics.lineTo(x + 8, y - 2); graphics.lineTo(x - 2, y - 2); graphics.closePath(); graphics.fillPath(); }
+            }
+
+            drawSpecialIcon(x, y, id) {
+                const graphics = this.add.graphics();
+                if (id === 'solar') {
+                    graphics.fillStyle(0xf1c40f, 1); graphics.fillCircle(x, y, 15);
+                    for (let i = 0; i < 8; i++) { const angle = i * (Math.PI / 4); graphics.lineStyle(3, 0xf1c40f); graphics.lineBetween(x + Math.cos(angle) * 18, y + Math.sin(angle) * 18, x + Math.cos(angle) * 26, y + Math.sin(angle) * 26); }
+                } else if (id === 'aura') { graphics.fillStyle(0x3498db, 1); graphics.beginPath(); graphics.moveTo(x - 15, y - 15); graphics.lineTo(x + 15, y - 15); graphics.lineTo(x + 15, y + 5); graphics.lineTo(x, y + 20); graphics.lineTo(x - 15, y + 5); graphics.closePath(); graphics.fillPath(); }
+                else if (id === 'double') { graphics.lineStyle(2, 0xffffff); graphics.strokeCircle(x, y, 20); graphics.strokeCircle(x, y, 12); graphics.fillStyle(0xff3333, 1); graphics.fillCircle(x, y, 5); graphics.lineStyle(1, 0xffffff); graphics.lineBetween(x - 25, y, x + 25, y); graphics.lineBetween(x, y - 25, x, y + 25); }
+                else if (id === 'rico') { graphics.lineStyle(3, 0x2ecc71); graphics.beginPath(); graphics.moveTo(x - 20, y + 10); graphics.lineTo(x, y - 10); graphics.lineTo(x + 20, y + 10); graphics.strokePath(); graphics.fillStyle(0x2ecc71, 1); graphics.fillCircle(x + 20, y + 10, 5); }
+            }
+        }
+
+        const config = {
+            type: Phaser.AUTO, width: 800, height: 600, parent: 'game-container',
+            physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+            scene: [MainMenu, GameScene, SpecialAbilityScene]
+        };
+        new Phaser.Game(config);
+    </script>
+</body>
+
+</html>
