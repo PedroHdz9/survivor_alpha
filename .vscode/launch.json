@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Ejecutar en Chrome (Local)",
+            "type": "chrome",
+            "request": "launch",
+            "file": "${workspaceFolder}/index.html",
+            "runtimeArgs": [
+                "--allow-file-access-from-files",
+                "--disable-web-security"
+            ]
+        },
+        {
+            "name": "Ejecutar en Edge (Local)",
+            "type": "msedge",
+            "request": "launch",
+            "file": "${workspaceFolder}/index.html",
+            "runtimeArgs": [
+                "--allow-file-access-from-files",
+                "--disable-web-security"
+            ]
+        }
+    ]
+}
