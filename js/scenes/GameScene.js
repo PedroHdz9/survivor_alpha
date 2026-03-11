@@ -14,12 +14,15 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
-        this.add.grid(0, 0, 4000, 4000, 64, 64, 0x222222, 1, 0x333333).setOrigin(0.5);
+        // Sustituir la cuadrícula por el fondo de textura repetible (TileSprite)
+        this.add.tileSprite(0, 0, 4000, 4000, 'background').setOrigin(0.5);
+
         this.cameras.main.setBounds(-2000, -2000, 4000, 4000);
         this.physics.world.setBounds(-2000, -2000, 4000, 4000);
 
         this.player = this.physics.add.sprite(0, 0, 'player_dir_0');
-        this.player.body.setCircle(18, 14, 14);
+        this.player.setScale(1.8); // Escalar al personaje
+        this.player.body.setCircle(12, 12, 28); // Hitbox
         this.player.body.setCollideWorldBounds(true);
 
         this.auraGraphic = this.add.circle(0, 0, 100, 0x3498db, 0.15).setVisible(false);
@@ -83,6 +86,37 @@ class GameScene extends Phaser.Scene {
             key: 'idle',
             frames: this.anims.generateFrameNumbers('player_idle', { start: 0, end: 7 }),
             frameRate: 10,
+            repeat: -1
+        });
+
+        // Crear animación de boss_walk (15 frames)
+        this.anims.create({
+            key: 'boss_walk',
+            frames: this.anims.generateFrameNumbers('boss', { start: 0, end: 14 }),
+            frameRate: 15,
+            repeat: -1
+        });
+
+        // Crear animaciones del enemigo a melé
+        this.anims.create({
+            key: 'enemy_walk',
+            frames: this.anims.generateFrameNumbers('enemy_walk', { start: 0, end: 7 }),
+            frameRate: 12,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: 'enemy_attack',
+            frames: this.anims.generateFrameNumbers('enemy_attack', { start: 0, end: 7 }),
+            frameRate: 15,
+            repeat: 0 // Solo ataca una vez, para que espere el intervalo
+        });
+
+        // Crear animación del enemigo a distancia (14 frames)
+        this.anims.create({
+            key: 'enemy_range_walk',
+            frames: this.anims.generateFrameNumbers('enemy_range', { start: 0, end: 13 }),
+            frameRate: 15,
             repeat: -1
         });
     }
@@ -165,10 +199,27 @@ class GameScene extends Phaser.Scene {
         this.enemies.getChildren().forEach(enemy => {
             if (enemy.isBoss) {
                 this.physics.moveToObject(enemy, this.player, enemy.speed);
+
+                // Voltear sprite según su dirección X
+                if (enemy.body.velocity.x < 0) {
+                    enemy.setFlipX(true);
+                } else if (enemy.body.velocity.x > 0) {
+                    enemy.setFlipX(false);
+                }
+
                 if (time > enemy.nextAttackTime) { this.bossAttack(enemy); enemy.nextAttackTime = time + enemy.shootCooldown; }
                 this.bossBarFill.width = 400 * Math.max(0, enemy.hp / enemy.maxHp);
             } else if (enemy.isRange) {
                 const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+
+                // Asegurar que la animación de andar se está reproduciendo siempre, se mueva o ataque
+                if (enemy.anims && (!enemy.anims.isPlaying || enemy.anims.currentAnim.key !== 'enemy_range_walk')) {
+                    enemy.play('enemy_range_walk', true);
+                }
+
+                // Siempre mirar hacia el jugador
+                enemy.setFlipX(this.player.x < enemy.x);
+
                 if (dist < 200) {
                     const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, enemy.x, enemy.y);
                     enemy.body.setVelocity(Math.cos(angle) * enemy.speed * 0.8, Math.sin(angle) * enemy.speed * 0.8);
@@ -182,7 +233,31 @@ class GameScene extends Phaser.Scene {
                     enemy.nextAttackTime = time + 2000;
                 }
             } else {
-                this.physics.moveToObject(enemy, this.player, enemy.speed);
+                const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+
+                if (dist < 55) { // Distancia de ataque cuerpo a cuerpo
+                    enemy.body.setVelocity(0, 0); // Detenerse para atacar
+                    enemy.setFlipX(this.player.x < enemy.x); // Mirar al jugador
+
+                    if (time > enemy.nextAttackTime) {
+                        enemy.play('enemy_attack', true);
+                        this.applyDamage(10);
+                        enemy.nextAttackTime = time + 1500; // Intervalo de 1.5s
+
+                        enemy.once('animationcomplete-enemy_attack', () => {
+                            if (enemy.active) enemy.play('enemy_walk', true);
+                        });
+                    }
+                } else {
+                    this.physics.moveToObject(enemy, this.player, enemy.speed);
+
+                    if (enemy.body.velocity.x < 0) enemy.setFlipX(true);
+                    else if (enemy.body.velocity.x > 0) enemy.setFlipX(false);
+
+                    if (enemy.anims && (!enemy.anims.isPlaying || enemy.anims.currentAnim.key !== 'enemy_attack')) {
+                        enemy.play('enemy_walk', true);
+                    }
+                }
             }
         });
 
@@ -203,7 +278,9 @@ class GameScene extends Phaser.Scene {
     checkPlayerDamage() {
         if (gameState.isInvulnerable) return;
         this.enemies.getChildren().forEach(enemy => {
-            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y) < (enemy.isBoss ? 75 : 38)) this.applyDamage(enemy.isBoss ? (30 + gameState.bossCount * 10) : 10);
+            if (enemy.isBoss && Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y) < 75) {
+                this.applyDamage(30 + gameState.bossCount * 10);
+            }
         });
     }
 
@@ -223,8 +300,16 @@ class GameScene extends Phaser.Scene {
 
     spawnBoss() {
         gameState.bossActive = true; gameState.bossCount++;
-        const boss = this.add.circle(this.player.x + 600, this.player.y, 60, 0xe74c3c);
-        this.enemies.add(boss); this.physics.add.existing(boss); boss.body.setCircle(60);
+
+        const boss = this.physics.add.sprite(this.player.x + 600, this.player.y, 'boss');
+        this.enemies.add(boss);
+
+        // Ajustar el círculo de colisión para el jefe
+        boss.body.setCircle(80, 32, 40);
+
+        // Reproducir la animación creada para el jefe
+        boss.play('boss_walk');
+
         boss.isBoss = true;
         boss.maxHp = 5000 * Math.pow(1.5, gameState.bossCount - 1);
         boss.hp = boss.maxHp;
@@ -301,12 +386,27 @@ class GameScene extends Phaser.Scene {
             const ex = this.player.x + Math.cos(a) * dist;
             const ey = this.player.y + Math.sin(a) * dist;
             const isRange = gameState.level >= 5 && Math.random() > 0.8;
-            const e = this.add.circle(ex, ey, isRange ? 18 : 16, isRange ? 0xf39c12 : 0xe74c3c);
-            this.enemies.add(e); this.physics.add.existing(e); e.body.setCircle(isRange ? 18 : 16);
+
+            let e;
+            if (isRange) {
+                e = this.physics.add.sprite(ex, ey, 'enemy_range');
+                e.setScale(2); // Usando la misma escala que el meele
+                this.enemies.add(e);
+                e.body.setCircle(16, 16, 16); // Hitbox adaptada y centrada
+                e.play('enemy_range_walk');
+            } else {
+                e = this.physics.add.sprite(ex, ey, 'enemy_walk');
+                e.setScale(2); // escala del enemigo melee
+                this.enemies.add(e);
+                e.body.setCircle(16, 32, 32); // Hitbox enemigo melee
+                e.play('enemy_walk');
+            }
+
             e.hp = (20 + (gameState.gameSeconds / 8)) * (isRange ? 0.8 : 1);
             e.speed = (80 + (gameState.gameSeconds / 30)) * (isRange ? 0.9 : 1);
             e.isRange = isRange;
             if (isRange) e.nextAttackTime = this.time.now + 1500;
+            else e.nextAttackTime = this.time.now;
         }
     }
 

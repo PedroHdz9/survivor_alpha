@@ -7,8 +7,6 @@ class MainMenu extends Phaser.Scene {
 
         this.load.audio('bgMusic', musicSource);
 
-        // Cargar los 8 sprites del jugador como "spritesheets"
-        // AJUSTA frameWidth y frameHeight
         const frameWidth = 48;
         const frameHeight = 64;
 
@@ -19,10 +17,35 @@ class MainMenu extends Phaser.Scene {
             });
         }
 
-        // Cargar el spritesheet de Idle 
         this.load.spritesheet('player_idle', 'assets/player_idle.png', {
             frameWidth: frameWidth,
             frameHeight: frameHeight
+        });
+
+        // Cargar el spritesheet del jefe
+        this.load.spritesheet('boss', 'assets/boss.png', {
+            frameWidth: 224,
+            frameHeight: 240
+        });
+
+        // Cargar imagen de fondo a modo de mapa
+        this.load.image('background', 'assets/background.png');
+
+        // Cargar spritesheets del enemigo cuerpo a cuerpo
+        this.load.spritesheet('enemy_walk', 'assets/enemy_walk.png', {
+            frameWidth: 96,
+            frameHeight: 96
+        });
+
+        this.load.spritesheet('enemy_attack', 'assets/enemy_attack.png', {
+            frameWidth: 96,
+            frameHeight: 96
+        });
+
+        // Cargar spritesheet del enemigo a distancia
+        this.load.spritesheet('enemy_range', 'assets/enemy_range.png', {
+            frameWidth: 64,
+            frameHeight: 62
         });
     }
     create() {
