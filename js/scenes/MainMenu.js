@@ -47,6 +47,17 @@ class MainMenu extends Phaser.Scene {
             frameWidth: 64,
             frameHeight: 62
         });
+
+        // Cargar proyectil y explosión del boss
+        this.load.spritesheet('boss_projectile', 'assets/boss_projectile.png', {
+            frameWidth: 32,
+            frameHeight: 32
+        });
+
+        this.load.spritesheet('boss_explosion', 'assets/boss_explosion.png', {
+            frameWidth: 32,
+            frameHeight: 32
+        });
     }
     create() {
         // Iniciar música globalmente al abrir la aplicación

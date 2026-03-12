@@ -55,7 +55,7 @@ class GameScene extends Phaser.Scene {
             callback: () => {
                 gameState.gameSeconds++;
                 this.timeText.setText(this.getFormattedTime());
-                if ((gameState.gameSeconds + 5) % 150 === 0) this.showBossWarning();
+                // Min spawn boss
                 if (gameState.gameSeconds > 0 && gameState.gameSeconds % 150 === 0 && !gameState.bossActive) this.spawnBoss();
             },
             callbackScope: this,
@@ -75,7 +75,7 @@ class GameScene extends Phaser.Scene {
         for (let i = 0; i < 8; i++) {
             this.anims.create({
                 key: `walk_${i}`,
-                frames: this.anims.generateFrameNumbers(`player_dir_${i}`, { start: 0, end: 7 }), // Asumiendo 8 frames (0 a 7)
+                frames: this.anims.generateFrameNumbers(`player_dir_${i}`, { start: 0, end: 7 }), // 8 frames (0 a 7)
                 frameRate: 12,
                 repeat: -1
             });
@@ -112,12 +112,26 @@ class GameScene extends Phaser.Scene {
             repeat: 0 // Solo ataca una vez, para que espere el intervalo
         });
 
-        // Crear animación del enemigo a distancia (14 frames)
         this.anims.create({
             key: 'enemy_range_walk',
             frames: this.anims.generateFrameNumbers('enemy_range', { start: 0, end: 13 }),
             frameRate: 15,
             repeat: -1
+        });
+
+        // Crear animaciones del ataque del jefe
+        this.anims.create({
+            key: 'boss_projectile_anim',
+            frames: this.anims.generateFrameNumbers('boss_projectile', { start: 0, end: 3 }),
+            frameRate: 12,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: 'boss_explosion_anim',
+            frames: this.anims.generateFrameNumbers('boss_explosion', { start: 0, end: 3 }),
+            frameRate: 15,
+            repeat: 0
         });
     }
 
@@ -168,6 +182,12 @@ class GameScene extends Phaser.Scene {
 
     update(time, delta) {
         if (!this.player.active) return;
+
+        if (gameState.isBossCinematic) {
+            this.player.body.setVelocity(0, 0);
+            return;
+        }
+
         let vx = 0, vy = 0;
         const speed = gameState.stats.speed;
         if (this.cursors.left.isDown || this.wasd.A.isDown) vx = -speed;
@@ -198,21 +218,24 @@ class GameScene extends Phaser.Scene {
 
         this.enemies.getChildren().forEach(enemy => {
             if (enemy.isBoss) {
-                this.physics.moveToObject(enemy, this.player, enemy.speed);
+                if (enemy.isSpawning) {
+                    enemy.body.setVelocity(0, 0);
+                } else {
+                    this.physics.moveToObject(enemy, this.player, enemy.speed);
 
-                // Voltear sprite según su dirección X
-                if (enemy.body.velocity.x < 0) {
-                    enemy.setFlipX(true);
-                } else if (enemy.body.velocity.x > 0) {
-                    enemy.setFlipX(false);
+                    // Voltear sprite según su dirección X
+                    if (enemy.body.velocity.x < 0) {
+                        enemy.setFlipX(true);
+                    } else if (enemy.body.velocity.x > 0) {
+                        enemy.setFlipX(false);
+                    }
+
+                    if (time > enemy.nextAttackTime) { this.bossAttack(enemy); enemy.nextAttackTime = time + enemy.shootCooldown; }
                 }
-
-                if (time > enemy.nextAttackTime) { this.bossAttack(enemy); enemy.nextAttackTime = time + enemy.shootCooldown; }
                 this.bossBarFill.width = 400 * Math.max(0, enemy.hp / enemy.maxHp);
             } else if (enemy.isRange) {
                 const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
 
-                // Asegurar que la animación de andar se está reproduciendo siempre, se mueva o ataque
                 if (enemy.anims && (!enemy.anims.isPlaying || enemy.anims.currentAnim.key !== 'enemy_range_walk')) {
                     enemy.play('enemy_range_walk', true);
                 }
@@ -242,7 +265,7 @@ class GameScene extends Phaser.Scene {
                     if (time > enemy.nextAttackTime) {
                         enemy.play('enemy_attack', true);
                         this.applyDamage(10);
-                        enemy.nextAttackTime = time + 1500; // Intervalo de 1.5s
+                        enemy.nextAttackTime = time + 1200; // Intervalo de 1.2s
 
                         enemy.once('animationcomplete-enemy_attack', () => {
                             if (enemy.active) enemy.play('enemy_walk', true);
@@ -294,40 +317,205 @@ class GameScene extends Phaser.Scene {
     }
 
     hitPlayerByProjectile(player, projectile) {
-        if (gameState.isInvulnerable) { projectile.destroy(); return; }
-        this.applyDamage(10 + gameState.bossCount * 5); projectile.destroy();
+        if (gameState.isInvulnerable) {
+            if (!projectile.isRingWall) projectile.destroy();
+            return;
+        }
+
+        if (projectile.isRingWall) {
+            this.applyDamage(gameState.hp * 0.9);
+            // El muro no se destruye con la colisión
+        } else if (projectile.isBigAttack) {
+            this.applyDamage(45);
+            this.createExplosion(projectile.x, projectile.y);
+            projectile.destroy();
+        } else {
+            this.applyDamage(10 + gameState.bossCount * 5);
+            projectile.destroy();
+        }
     }
 
     spawnBoss() {
         gameState.bossActive = true; gameState.bossCount++;
 
-        const boss = this.physics.add.sprite(this.player.x + 600, this.player.y, 'boss');
+        // Hacemos que el jefe aparezca más cerca (a 350 de distancia) para que quede dentro del anillo
+        const boss = this.physics.add.sprite(this.player.x + 350, this.player.y, 'boss');
         this.enemies.add(boss);
 
-        // Ajustar el círculo de colisión para el jefe
+        // Crear el anillo/muro de proyectiles alrededor del jugador
+        const ringRadius = 500;
+        const ringCount = 70; // Cantidad de proyectiles para formar un muro semi-espeso
+        for (let i = 0; i < ringCount; i++) {
+            const angle = (Math.PI * 2 / ringCount) * i;
+            const px = this.player.x + Math.cos(angle) * ringRadius;
+            const py = this.player.y + Math.sin(angle) * ringRadius;
+
+            const wallBall = this.add.circle(px, py, 14, 0x9b59b6);
+            this.enemyProjectiles.add(wallBall);
+            this.physics.add.existing(wallBall);
+
+            wallBall.body.setCircle(14);
+            wallBall.body.immovable = true;
+            wallBall.isRingWall = true;
+
+            // Que aparezcan gradualmente sincronizados con la cinemática
+            wallBall.setAlpha(0);
+            this.tweens.add({ targets: wallBall, alpha: 1, duration: 1500 });
+        }
+
+        // círculo de colisión para el jefe
         boss.body.setCircle(80, 32, 40);
 
-        // Reproducir la animación creada para el jefe
-        boss.play('boss_walk');
-
         boss.isBoss = true;
-        boss.maxHp = 5000 * Math.pow(1.5, gameState.bossCount - 1);
+        boss.maxHp = 10000 * Math.pow(1.5, gameState.bossCount - 1);
         boss.hp = boss.maxHp;
         boss.speed = 100 + (gameState.bossCount * 5);
         boss.shootCooldown = Math.max(800, 1500 - (gameState.bossCount * 100));
-        boss.nextAttackTime = this.time.now + 1000;
         this.bossBarContainer.setAlpha(1);
+
+        // --- ANIMACIÓN DE APARICIÓN ---
+        boss.isSpawning = true;
+        boss.setFrame(0); // Inicia quieto, sin animación
+        gameState.isInvulnerable = true;
+
+        // Congelar todos los elementos del juego (físicas, tiempo, animaciones)
+        gameState.isBossCinematic = true;
+        this.physics.pause();
+        this.clockEvent.paused = true;
+        this.enemyTimer.paused = true;
+        this.attackTimer.paused = true;
+        if (this.auraTimer) this.auraTimer.paused = true;
+
+        this.enemies.getChildren().forEach(e => { if (e.anims) e.anims.pause(); });
+        if (this.player.anims) this.player.anims.pause();
+
+        this.showBossWarning(); // Mostramos el mensaje cuando realmente spawnea
+        this.cameras.main.stopFollow();
+
+        // Mover cámara hacia donde está el jefe
+        this.cameras.main.pan(boss.x, boss.y, 1000, 'Power2');
+
+        // Esperar que la cámara llegue y observarlo un instante
+        this.time.delayedCall(1000, () => {
+            // Crear el diálogo debajo del jefe
+            const dialogText = this.add.text(boss.x, boss.y + 60, '"No deberías estar aquí."', {
+                fontSize: '16px',
+                fill: '#ffcccc',
+                fontStyle: 'italic',
+                backgroundColor: '#000000cc',
+                padding: { x: 10, y: 5 },
+                stroke: '#000000',
+                strokeThickness: 2
+            }).setOrigin(0.5).setAlpha(0).setDepth(150);
+
+            // Efecto de aparición del diálogo
+            this.tweens.add({
+                targets: dialogText,
+                alpha: 1,
+                y: boss.y + 120, // Baja un poquito
+                duration: 400,
+                ease: 'Power2'
+            });
+
+            // Esperar un par de segundos para que se pueda leer el texto
+            this.time.delayedCall(2500, () => {
+                // Fading del diálogo
+                this.tweens.add({
+                    targets: dialogText,
+                    alpha: 0,
+                    duration: 400,
+                    onComplete: () => dialogText.destroy()
+                });
+
+                // Devolver la cámara al jugador
+                this.cameras.main.pan(this.player.x, this.player.y, 800, 'Power2');
+
+                this.time.delayedCall(800, () => {
+                    // Restaurar todo y comenzar el combate
+                    this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+                    gameState.isInvulnerable = false;
+                    boss.isSpawning = false;
+
+                    // Descongelar el juego
+                    gameState.isBossCinematic = false;
+                    this.physics.resume();
+                    this.clockEvent.paused = false;
+                    this.enemyTimer.paused = false;
+                    this.attackTimer.paused = false;
+                    if (this.auraTimer) this.auraTimer.paused = false;
+
+                    this.enemies.getChildren().forEach(e => { if (e.anims) e.anims.resume(); });
+                    if (this.player.anims) this.player.anims.resume();
+
+                    boss.play('boss_walk');
+                    boss.nextAttackTime = this.time.now + 1000;
+                });
+            });
+        });
     }
 
     bossAttack(boss) {
-        const bulletsCount = 10 + gameState.bossCount * 2;
-        for (let i = 0; i < bulletsCount; i++) {
-            const angle = (Math.PI * 2 / bulletsCount) * i;
-            const ball = this.add.circle(boss.x, boss.y, 12, 0x9b59b6);
-            this.enemyProjectiles.add(ball); this.physics.add.existing(ball);
-            ball.body.setVelocity(Math.cos(angle) * 300, Math.sin(angle) * 300);
-            this.time.delayedCall(4000, () => { if (ball.active) ball.destroy(); });
+        boss.attackCount = (boss.attackCount || 0) + 1;
+
+        // Alternar ataques: con mayor frecuencia usa el ataque de área y de vez en cuando el ataque grande
+        if (boss.attackCount % 3 === 0) {
+            this.bossBigAttack(boss);
+        } else {
+            const bulletsCount = 10 + gameState.bossCount * 2;
+            for (let i = 0; i < bulletsCount; i++) {
+                const angle = (Math.PI * 2 / bulletsCount) * i;
+                const ball = this.add.circle(boss.x, boss.y, 12, 0x9b59b6);
+                this.enemyProjectiles.add(ball); this.physics.add.existing(ball);
+                ball.body.setVelocity(Math.cos(angle) * 300, Math.sin(angle) * 300);
+                this.time.delayedCall(4000, () => { if (ball.active) ball.destroy(); });
+            }
         }
+    }
+
+    bossBigAttack(boss) {
+        // En vez de un círculo, usamos el sprite del proyectil animado
+        const ball = this.physics.add.sprite(boss.x, boss.y, 'boss_projectile');
+
+        this.enemyProjectiles.add(ball);
+
+        // Ajustamos la hitbox de acuerdo a que el frame es de 32x32
+        ball.body.setCircle(16, 0, 0);
+        ball.isBigAttack = true;
+
+        // Reproducir la animación en bucle
+        ball.play('boss_projectile_anim');
+
+        // Escalar el tamaño del proyectil para hacerlo mucho más grande
+        ball.setScale(2.5);
+
+        // Disparar en dirección al jugador
+        const angle = Phaser.Math.Angle.Between(boss.x, boss.y, this.player.x, this.player.y);
+        ball.body.setVelocity(Math.cos(angle) * 350, Math.sin(angle) * 350);
+
+        // Orientar el sprite visualmente hacia donde viaja
+        ball.setRotation(angle);
+
+        // A los 2 segundos, explota si no ha colisionado
+        this.time.delayedCall(2000, () => {
+            if (ball.active) {
+                this.createExplosion(ball.x, ball.y);
+                ball.destroy();
+            }
+        });
+    }
+
+    createExplosion(x, y) {
+        const explosion = this.add.sprite(x, y, 'boss_explosion');
+
+        // Escalar la explosión proporcionalmente al proyectil
+        explosion.setScale(3);
+
+        explosion.play('boss_explosion_anim');
+
+        // Destruir el sprite de la explosión cuando termine su animación
+        explosion.on('animationcomplete', () => {
+            explosion.destroy();
+        });
     }
 
     enemyShoot(enemy) {
@@ -390,15 +578,15 @@ class GameScene extends Phaser.Scene {
             let e;
             if (isRange) {
                 e = this.physics.add.sprite(ex, ey, 'enemy_range');
-                e.setScale(2); // Usando la misma escala que el meele
+                e.setScale(2); // escala ranged
                 this.enemies.add(e);
-                e.body.setCircle(16, 16, 16); // Hitbox adaptada y centrada
+                e.body.setCircle(16, 16, 16); // Hitbox ranged
                 e.play('enemy_range_walk');
             } else {
                 e = this.physics.add.sprite(ex, ey, 'enemy_walk');
-                e.setScale(2); // escala del enemigo melee
+                e.setScale(2); // escala melee
                 this.enemies.add(e);
-                e.body.setCircle(16, 32, 32); // Hitbox enemigo melee
+                e.body.setCircle(16, 32, 32); // Hitbox melee
                 e.play('enemy_walk');
             }
 
@@ -435,6 +623,19 @@ class GameScene extends Phaser.Scene {
             if (enemy.isBoss) {
                 gameState.bossActive = false; this.bossBarContainer.setAlpha(0);
                 for (let i = 0; i < 10; i++) this.spawnGem(enemy.x + Math.random() * 40, enemy.y + Math.random() * 40, true);
+
+                // Destruir el muro de proyectiles al matar al jefe
+                this.enemyProjectiles.getChildren().forEach(proj => {
+                    if (proj.isRingWall) {
+                        this.tweens.add({
+                            targets: proj,
+                            alpha: 0,
+                            scale: 0,
+                            duration: 600,
+                            onComplete: () => proj.destroy()
+                        });
+                    }
+                });
             } else {
                 this.spawnGem(enemy.x, enemy.y, Math.random() > 0.9);
                 const currentPickups = this.pickups.getChildren();
