@@ -47,7 +47,8 @@ function drawIconById(graphics, x, y, id, scale = 1) {
 }
 
 function createSettingsButton(scene) {
-    const x = 750, y = 50;
+    const w = 1280;
+    const x = w - 50, y = 50;
     
     // Extraer los elementos del contenedor evita bugs de "hitbox" con cámaras que se mueven
     const circle = scene.add.circle(x, y, 25, 0x333333, 0.8)

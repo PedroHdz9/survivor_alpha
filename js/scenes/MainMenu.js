@@ -82,16 +82,17 @@ class MainMenu extends Phaser.Scene {
             }
         });
 
-        this.add.rectangle(400, 300, 800, 600, 0x111111);
-        this.add.text(400, 150, 'SUPER SURVIVOR', { fontSize: '64px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
-        const startBtn = this.add.rectangle(400, 400, 250, 70, 0x27ae60).setInteractive({ useHandCursor: true });
-        this.add.text(400, 400, 'INICIAR PARTIDA', { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
+        const w = 1280, h = 720;
+        this.add.rectangle(w / 2, h / 2, w, h, 0x111111);
+        this.add.text(w / 2, h * 0.25, 'SUPER SURVIVOR', { fontSize: '64px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+        const startBtn = this.add.rectangle(w / 2, h * 0.6, 250, 70, 0x27ae60).setInteractive({ useHandCursor: true });
+        this.add.text(w / 2, h * 0.6, 'INICIAR PARTIDA', { fontSize: '24px', fill: '#fff' }).setOrigin(0.5);
 
         startBtn.on('pointerdown', () => {
             this.scene.start('GameScene');
         });
 
-        this.add.text(400, 550, 'WASD/Joystick para mover | ESC para Pausa', { fontSize: '16px', fill: '#888' }).setOrigin(0.5);
+        this.add.text(w / 2, h * 0.85, 'WASD/Joystick para mover | ESC para Pausa', { fontSize: '16px', fill: '#888' }).setOrigin(0.5);
         createSettingsButton(this);
     }
 }

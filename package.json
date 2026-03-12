@@ -1,0 +1,27 @@
+{
+  "name": "super-survivor-alpha",
+  "version": "1.0.0",
+  "description": "Super Survivor Alpha",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "author": "PedroHdz9",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^29.1.5",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.pedrohdz9.supersurvivor",
+    "productName": "Super Survivor Alpha",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

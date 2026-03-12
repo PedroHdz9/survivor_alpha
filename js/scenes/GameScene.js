@@ -138,22 +138,23 @@ class GameScene extends Phaser.Scene {
 
 
     createHUD() {
+        const w = 1280, h = 720;
         this.hud = this.add.container(0, 0).setScrollFactor(0).setDepth(100);
         this.hpBarBase = this.add.rectangle(20, 35, 200, 20, 0x000000).setOrigin(0);
         this.hpBar = this.add.rectangle(20, 35, 200, 20, 0x2ecc71).setOrigin(0);
         this.hpText = this.add.text(120, 45, '100 / 100', { fontSize: '12px', fill: '#ffffff', fontWeight: 'bold' }).setOrigin(0.5);
-        this.expBarBase = this.add.rectangle(0, 0, 800, 10, 0x444444).setOrigin(0);
+        this.expBarBase = this.add.rectangle(0, 0, w, 10, 0x444444).setOrigin(0);
         this.expBar = this.add.rectangle(0, 0, 0, 10, 0x9b59b6).setOrigin(0);
         this.levelText = this.add.text(20, 65, 'Nivel: 1', { fontSize: '18px', fill: '#fff', fontWeight: 'bold' });
-        this.timeText = this.add.text(400, 35, '00:00', { fontSize: '26px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+        this.timeText = this.add.text(w / 2, 35, '00:00', { fontSize: '26px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
 
-        this.bossBarContainer = this.add.container(400, 570).setAlpha(0);
+        this.bossBarContainer = this.add.container(w / 2, h - 30).setAlpha(0);
         this.bossBarBase = this.add.rectangle(0, 0, 400, 8, 0x333333).setOrigin(0.5);
         this.bossBarFill = this.add.rectangle(0, 0, 400, 8, 0x9b59b6).setOrigin(0.5);
         this.bossBarText = this.add.text(0, -15, 'JEFE', { fontSize: '14px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
         this.bossBarContainer.add([this.bossBarBase, this.bossBarFill, this.bossBarText]);
 
-        this.bossWarning = this.add.container(400, 175).setAlpha(0).setScale(0.5);
+        this.bossWarning = this.add.container(w / 2, h * 0.3).setAlpha(0).setScale(0.5);
         const warningBg = this.add.rectangle(0, 0, 320, 90, 0x000000, 0.9).setStrokeStyle(4, 0xe74c3c);
         this.bossWarning.add([warningBg, this.add.text(0, 0, '¡HA APARECIDO\nUN JEFE!', { fontSize: '24px', fill: '#e74c3c', fontWeight: 'bold', align: 'center' }).setOrigin(0.5)]);
 
@@ -161,14 +162,20 @@ class GameScene extends Phaser.Scene {
     }
 
     createInventoryUI() {
-        const startX = 580; const y = 50; const slotSize = 45; const spacing = 52;
-        this.add.rectangle(startX + spacing, y, 170, 60, 0x000000, 0.4).setScrollFactor(0).setDepth(190).setStrokeStyle(2, 0x444444);
+        const w = 1280;
+        const spacing = 52, slotSize = 45, y = 50;
+        // Movido más a la izquierda (140 en vez de 20)
+        const startX = w - (MAX_INVENTORY_SLOTS * spacing) - 140;
+
+        // El fondo ahora está perfectamente centrado con los 3 slots (startX + spacing)
+        this.inventoryBg = this.add.rectangle(startX + spacing, y, 180, 65, 0x000000, 0.4).setScrollFactor(0).setDepth(190).setStrokeStyle(2, 0x444444);
+
         this.abilitySlots = [];
         for (let i = 0; i < MAX_INVENTORY_SLOTS; i++) {
             const slotX = startX + (i * spacing);
-            this.add.rectangle(slotX, y, slotSize, slotSize, 0x222222).setScrollFactor(0).setDepth(200).setStrokeStyle(2, 0x666666);
+            const slotRect = this.add.rectangle(slotX, y, slotSize, slotSize, 0x222222).setScrollFactor(0).setDepth(200).setStrokeStyle(2, 0x666666);
             const iconGraphics = this.add.graphics().setScrollFactor(0).setDepth(201);
-            this.abilitySlots.push({ graphics: iconGraphics, x: slotX, y: y });
+            this.abilitySlots.push({ bg: slotRect, graphics: iconGraphics, x: slotX, y: y });
         }
     }
 
@@ -287,7 +294,7 @@ class GameScene extends Phaser.Scene {
         this.checkPlayerDamage();
         this.hpBar.width = Math.max(0, (gameState.hp / gameState.stats.maxHp) * 200);
         this.hpText.setText(`${Math.ceil(Math.max(0, gameState.hp))} / ${gameState.stats.maxHp}`);
-        this.expBar.width = Math.min(800, (gameState.exp / gameState.nextLevelExp) * 800);
+        this.expBar.width = Math.min(1280, (gameState.exp / gameState.nextLevelExp) * 1280);
     }
 
     applyAuraDamage() {
@@ -338,13 +345,13 @@ class GameScene extends Phaser.Scene {
     spawnBoss() {
         gameState.bossActive = true; gameState.bossCount++;
 
-        // Hacemos que el jefe aparezca más cerca (a 350 de distancia) para que quede dentro del anillo
-        const boss = this.physics.add.sprite(this.player.x + 350, this.player.y, 'boss');
+        // Hacemos que el jefe aparezca a una distancia adecuada para la resolución HD
+        const boss = this.physics.add.sprite(this.player.x + 500, this.player.y, 'boss');
         this.enemies.add(boss);
 
         // Crear el anillo/muro de proyectiles alrededor del jugador
-        const ringRadius = 500;
-        const ringCount = 70; // Cantidad de proyectiles para formar un muro semi-espeso
+        const ringRadius = 750;
+        const ringCount = 90; // Aumentado para cubrir el radio mayor
         for (let i = 0; i < ringCount; i++) {
             const angle = (Math.PI * 2 / ringCount) * i;
             const px = this.player.x + Math.cos(angle) * ringRadius;
@@ -570,7 +577,7 @@ class GameScene extends Phaser.Scene {
         const count = 5 + Math.floor(gameState.gameSeconds / 30);
         for (let i = 0; i < count; i++) {
             const a = Math.random() * Math.PI * 2;
-            const dist = 700;
+            const dist = 900; // Fuera de la vista en 1280x720
             const ex = this.player.x + Math.cos(a) * dist;
             const ey = this.player.y + Math.sin(a) * dist;
             const isRange = gameState.level >= 5 && Math.random() > 0.8;
@@ -720,7 +727,8 @@ class GameScene extends Phaser.Scene {
     }
 
     createJoystick() {
-        const x = 680, y = 480;
+        const w = 1280, h = 720;
+        const x = w * 0.85, y = h * 0.8;
         this.joyBase = this.add.circle(x, y, 60, 0xffffff, 0.1).setScrollFactor(0).setDepth(101).setInteractive();
         this.joyStick = this.add.circle(x, y, 30, 0xffffff, 0.2).setScrollFactor(0).setDepth(102);
         this.joyBase.on('pointerdown', () => this.joystickData.active = true);

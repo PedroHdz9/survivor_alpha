@@ -1,9 +1,10 @@
 class SpecialAbilityScene extends Phaser.Scene {
     constructor() { super('SpecialAbilityScene'); }
     create() {
+        const w = 1280, h = 720;
         const isMilestone = (gameState.level % 5 === 0);
-        this.add.rectangle(400, 300, 500, 520, 0x1a1a1a, 0.98).setStrokeStyle(5, isMilestone ? 0xf1c40f : 0x9b59b6);
-        this.add.text(400, 80, isMilestone ? '¡NUEVA HABILIDAD!' : 'MEJORA', { fontSize: '32px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
+        this.add.rectangle(w / 2, h / 2, 500, 520, 0x1a1a1a, 0.98).setStrokeStyle(5, isMilestone ? 0xf1c40f : 0x9b59b6);
+        this.add.text(w / 2, h * 0.22, isMilestone ? '¡NUEVA HABILIDAD!' : 'MEJORA', { fontSize: '32px', fill: '#fff', fontWeight: 'bold' }).setOrigin(0.5);
 
         const specialAbilities = [
             { name: 'Explosión Solar', id: 'solar', effect: () => { if (this.getLvl('solar') === 0) gameState.inventory.push('solar'); gameState.abilities.solarExplosion++; } },
@@ -34,14 +35,14 @@ class SpecialAbilityScene extends Phaser.Scene {
             Phaser.Utils.Array.Shuffle([...acquiredNotMax, ...baseUpgrades]).slice(0, 3);
 
         pool.forEach((opt, i) => {
-            const y = 180 + (i * 100);
+            const y = (h * 0.35) + (i * 105);
             const isSpec = specialAbilities.find(s => s.id === opt.id);
-            const btn = this.add.rectangle(400, y, 400, 80, isSpec ? 0x2c3e50 : 0x34495e).setInteractive({ useHandCursor: true });
+            const btn = this.add.rectangle(w / 2, y, 400, 80, isSpec ? 0x2c3e50 : 0x34495e).setInteractive({ useHandCursor: true });
             const iconGraph = this.add.graphics();
-            drawIconById(iconGraph, 230, y, opt.id, 0.5);
+            drawIconById(iconGraph, w / 2 - 170, y, opt.id, 0.5);
             const lvl = this.getLvl(opt.id);
             const title = isSpec ? `${opt.name} (NVL ${lvl + 1})` : opt.name;
-            this.add.text(410, y, title, { fontSize: '20px', fill: '#fff' }).setOrigin(0.5);
+            this.add.text(w / 2 + 10, y, title, { fontSize: '20px', fill: '#fff' }).setOrigin(0.5);
             btn.on('pointerdown', () => {
                 opt.effect();
                 const gs = this.scene.get('GameScene');
